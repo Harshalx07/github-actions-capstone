@@ -1,0 +1,50 @@
+name: Scheduled Health Check
+
+on:
+  schedule:
+    - cron: "0 */12 * * *"
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull latest image
+        run: docker pull ${{ secrets.DOCKER_USERNAME }}/github-actions-capstone:latest
+
+      - name: Run container
+        run: |
+          docker run -d --name capstone-app -p 5000:5000 \
+            ${{ secrets.DOCKER_USERNAME }}/github-actions-capstone:latest
+
+      - name: Wait for container to start
+        run: sleep 5
+
+      - name: Curl health endpoint
+        id: healthcheck
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/health)
+          echo "http_status=$response" >> "$GITHUB_OUTPUT"
+          if [ "$response" -eq 200 ]; then
+            echo "result=PASSED" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=FAILED" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop and remove container
+        if: always()
+        run: |
+          docker stop capstone-app || true
+          docker rm capstone-app || true
+
+      - name: Write step summary
+        if: always()
+        run: |
+          echo "## Health Check Report" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: ${{ secrets.DOCKER_USERNAME }}/github-actions-capstone:latest" >> $GITHUB_STEP_SUMMARY
+          echo "- Status: ${{ steps.healthcheck.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Time: $(date)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail job if unhealthy
+        if: steps.healthcheck.outputs.result == 'FAILED'
+        run: exit 1

@@ -1,0 +1,49 @@
+name: Reusable - Docker Build & Push
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Docker image name (without registry or tag)"
+        type: string
+        required: true
+      tag:
+        description: "Tag to apply to the image"
+        type: string
+        required: true
+    secrets:
+      docker_username:
+        required: true
+      docker_token:
+        required: true
+    outputs:
+      image_url:
+        description: "Full pushed image path"
+        value: ${{ jobs.docker-build-push.outputs.image_url }}
+
+jobs:
+  docker-build-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_url: ${{ steps.set-output.outputs.image_url }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.docker_username }}
+          password: ${{ secrets.docker_token }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.docker_username }}/${{ inputs.image_name }}:${{ inputs.tag }}
+
+      - name: Set image_url output
+        id: set-output
+        run: |
+          echo "image_url=${{ secrets.docker_username }}/${{ inputs.image_name }}:${{ inputs.tag }}" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,75 @@
+name: Main Branch Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-test:
+    uses: ./.github/workflows/reusable-build-test.yml
+    with:
+      python_version: "3.12"
+      run_tests: true
+
+  vars:
+    needs: build-test
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.sha.outputs.short_sha }}
+    steps:
+      - name: Compute short SHA
+        id: sha
+        run: echo "short_sha=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+  docker-latest:
+    needs: vars
+    uses: ./.github/workflows/reusable-docker.yml
+    with:
+      image_name: github-actions-capstone
+      tag: latest
+    secrets:
+      docker_username: ${{ secrets.DOCKER_USERNAME }}
+      docker_token: ${{ secrets.DOCKER_TOKEN }}
+
+  docker-sha:
+    needs: vars
+    uses: ./.github/workflows/reusable-docker.yml
+    with:
+      image_name: github-actions-capstone
+      tag: sha-${{ needs.vars.outputs.short_sha }}
+    secrets:
+      docker_username: ${{ secrets.DOCKER_USERNAME }}
+      docker_token: ${{ secrets.DOCKER_TOKEN }}
+
+  # Brownie points: DevSecOps scan on the freshly pushed :latest image
+  trivy-scan:
+    needs: docker-latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ needs.docker-latest.outputs.image_url }}
+          format: table
+          severity: CRITICAL
+          exit-code: "1"
+          output: trivy-report.txt
+
+      - name: Upload scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-scan-report
+          path: trivy-report.txt
+
+  deploy:
+    needs: [docker-latest, trivy-scan]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy
+        run: |
+          echo "Deploying image: ${{ needs.docker-latest.outputs.image_url }} to production"
